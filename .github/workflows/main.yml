@@ -1,0 +1,61 @@
+name: RDP
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp-server:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    steps:
+      - name: Install ngrok
+        run: |
+          $ngrokUrl = "https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip"
+          $zipPath = "$env:TEMP\ngrok.zip"
+          Invoke-WebRequest -Uri $ngrokUrl -OutFile $zipPath
+          Expand-Archive -LiteralPath $zipPath -DestinationPath $env:TEMP -Force
+          Move-Item -Path "$env:TEMP\ngrok.exe" -Destination "$env:ProgramFiles\ngrok.exe" -Force
+          Remove-Item $zipPath -Force
+
+      - name: Configure ngrok auth
+        run: |
+          $env:NGROK_TOKEN = "${{ secrets.NGROK_AUTH_TOKEN }}"
+          & "$env:ProgramFiles\ngrok.exe" authtoken $env:NGROK_TOKEN
+
+      - name: Start ngrok TCP tunnel for RDP and get public address
+        shell: powershell
+        run: |
+          Start-Process -FilePath "$env:ProgramFiles\ngrok.exe" -ArgumentList "tcp 3389 --log=stdout" -NoNewWindow
+          $addr = $null
+          $tries = 0
+          while (-not $addr -and $tries -lt 20) {
+              Start-Sleep -Seconds 2
+              try {
+                  $tunnels = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
+                  foreach ($t in $tunnels.tunnels) {
+                      if ($t.proto -eq "tcp") {
+                          $addr = $t.public_url
+                          break
+                      }
+                  }
+              } catch {}
+              $tries++
+          }
+          if (-not $addr) {
+              Write-Error "ngrok tunnel not assigned"
+              exit 1
+          }
+          Write-Host "ngrok address: $addr"
+          echo "NGROK_ADDR=$addr" >> $env:GITHUB_ENV
+
+      - name: Verify RDP via ngrok
+        run: |
+          $tcp = $env:NGROK_ADDR
+          if (-not $tcp) { Write-Error "No ngrok address"; exit 1 }
+          $parts = $tcp -replace '^tcp://','' -split ':'
+          $host = $parts[0]; $port = [int]$parts[1]
+          $test = Test-NetConnection -ComputerName $host -Port $port -InformationLevel "Detailed"
+          if (-not $test.TcpTestSucceeded) {
+              Write-Error "TCP connection to $host:$port failed"
+              exit 1
+          }
+          Write-Host "TCP connectivity via ngrok OK: $host:$port"
