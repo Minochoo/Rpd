@@ -11,7 +11,7 @@ jobs:
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          net user TOOLBOXLAP admin@123
+          net user runneradmin admin@123
 
       - name: Install ngrok (latest v3)
         run: |
